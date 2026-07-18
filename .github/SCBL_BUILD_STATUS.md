@@ -1,19 +1,19 @@
 # SCBL dedicated server build status
 
-- Result: **failure**
-- Source commit: `f5793444d2184977a3570adca3c581311dece88a`
-- Workflow run: `29655160671`
-- Updated UTC: `2026-07-18T18:09:59Z`
+- Result: **success**
+- Source commit: `99eb75d13bf320542596d822c5e0e0c86478a74b`
+- Workflow run: `29655385200`
+- Updated UTC: `2026-07-18T18:17:10Z`
 
 | Step | Outcome |
 |---|---|
 | Dependencies | success |
 | Rust toolchain | success |
-| Formatting | failure |
+| Formatting | success |
 | Tests | success |
 | Release build | success |
 | Artifact validation | success |
-| GitHub Release | skipped |
+| GitHub Release | success |
 
 ## build.log
 
@@ -22,11 +22,11 @@
    Compiling color-eyre v0.6.5
    Compiling blake2 v0.11.0-rc.2
    Compiling sqlx-macros v0.8.6
-   Compiling rust-fuzzy-search v0.1.1
    Compiling dedicated_server v0.2.5 (/home/runner/work/5th-echelon/5th-echelon/dedicated_server)
+   Compiling rust-fuzzy-search v0.1.1
    Compiling argh v0.1.13
-   Compiling argon2 v0.6.0-rc.1
    Compiling tonic-reflection v0.14.2
+   Compiling argon2 v0.6.0-rc.1
    Compiling tonic-async-interceptor v0.14.1
    Compiling sodiumoxide v0.2.7
    Compiling quazal v0.2.5 (/home/runner/work/5th-echelon/5th-echelon/quazal)
@@ -126,26 +126,26 @@ warning: methods `register_user`, `find_user_by_ubi_id`, `find_user_by_id`, and 
     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
 warning: field `receiver` is never read
-   --> dedicated_server/src/storage/mod.rs:695:9
+   --> dedicated_server/src/storage/mod.rs:692:9
     |
-692 | pub struct Invite {
+689 | pub struct Invite {
     |            ------ field in this struct
 ...
-695 |     pub receiver: u32,
+692 |     pub receiver: u32,
     |         ^^^^^^^^
     |
     = note: `Invite` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
 
 warning: `dedicated_server` (bin "dedicated_server") generated 2 warnings
-    Finished `release` profile [optimized] target(s) in 3m 02s
+    Finished `release` profile [optimized] target(s) in 3m 11s
 ```
 
 ## dependencies.log
 
 ```text
 Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
-Hit:6 https://packages.microsoft.com/repos/azure-cli noble InRelease
 Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+Hit:6 https://packages.microsoft.com/repos/azure-cli noble InRelease
 Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
 Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
 Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
@@ -174,7 +174,7 @@ Get:28 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Comp
 Get:29 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1166 kB]
 Get:30 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [268 kB]
 Get:31 https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages [1223 B]
-Fetched 10.3 MB in 1s (8478 kB/s)
+Fetched 10.3 MB in 1s (8181 kB/s)
 Reading package lists...
 Reading package lists...
 Building dependency tree...
@@ -197,7 +197,7 @@ Get:4 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libprotoc3
 Get:5 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libsodium-dev amd64 1.0.18-1ubuntu0.24.04.1 [185 kB]
 Get:6 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libprotobuf-dev amd64 3.21.12-8.2ubuntu0.3 [1413 kB]
 Get:7 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 protobuf-compiler amd64 3.21.12-8.2ubuntu0.3 [29.0 kB]
-Fetched 3238 kB in 1s (2682 kB/s)
+Fetched 3238 kB in 1s (3719 kB/s)
 Selecting previously unselected package build-essential.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 202507 files and directories currently installed.)
 Preparing to unpack .../0-build-essential_12.10ubuntu1_amd64.deb ...
@@ -241,132 +241,18 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 ## file.log
 
 ```text
-dist/dedicated_server-linux-x86_64: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=e196c1253b1dbec02601f83a3bad766b0174e32d, stripped
+dist/dedicated_server-linux-x86_64: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=99ded3a9da32efa8d3c7a524c0376e33539e4bb2, stripped
 ```
 
 ## format.log
 
 ```text
-+            self.storage
-+                .leave_game_session(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
-             logger,
-             "error leaving game session"
-         )?;
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/game_session.rs:243:
-         let user_id = login_required(&*ci)?;
-         info!(logger, "Client abandons session: {:?}", request);
-         rmc_err!(
--            self.storage.leave_game_session(
--                user_id,
--                request.game_session_key.type_id,
--                request.game_session_key.session_id,
--            ),
-+            self.storage
-+                .leave_game_session(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
-             logger,
-             "error abandoning game session"
-         )?;
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/game_session.rs:343:
-         info!(logger, "Client migrates session host: {:?}", request);
- 
-         let migrated = rmc_err!(
--            self.storage.migrate_game_session_host(
--                user_id,
--                request.game_session_key.type_id,
--                request.game_session_key.session_id,
--            ),
-+            self.storage
-+                .migrate_game_session_host(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
-             logger,
-             "error migrating game session host"
-         )?;
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/overlord_core.rs:101:
-             ("NC_CONNECTION_ESTABLISHED_TIMEOUT".to_owned(), F64(10.0)),
-         ];
- 
--                /*
-+        /*
-         // Alternative implementation using a HashMap for configuration values.
-         // This could be used for more dynamic configuration loading.
-          let cfg: std::collections::HashMap<std::string::String, Variant> = [
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/overlord_news.rs:12:
- /// Represents a single news item.
- #[derive(Debug, ToStream, FromStream, Default, Deserialize)]
- struct NewsItem {
--    maybe_id: u32, // Likely a unique identifier for the news item.
--    unk2: u32,     // Unknown purpose.
--    unk3: u32,     // Unknown purpose.
--    unk4: u32,     // Unknown purpose.
--    unk5: String,  // Unknown purpose, possibly a category or source.
--    unk6: DateTime,// Unknown purpose, possibly creation or start date.
--    unk7: DateTime,// Unknown purpose, possibly an end date or last modified date.
-+    maybe_id: u32,             // Likely a unique identifier for the news item.
-+    unk2: u32,                 // Unknown purpose.
-+    unk3: u32,                 // Unknown purpose.
-+    unk4: u32,                 // Unknown purpose.
-+    unk5: String,              // Unknown purpose, possibly a category or source.
-+    unk6: DateTime,            // Unknown purpose, possibly creation or start date.
-+    unk7: DateTime,            // Unknown purpose, possibly an end date or last modified date.
-     expiration_time: DateTime, // The time when this news item expires.
--    title: String,       // The title of the news item.
--    link: String,        // A URL associated with the news item.
--    description: String, // The main content or description of the news item.
-+    title: String,             // The title of the news item.
-+    link: String,              // A URL associated with the news item.
-+    description: String,       // The main content or description of the news item.
- }
- 
- #[allow(clippy::module_name_repetitions)]
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/storage/mod.rs:284:
-             .execute(&mut *transaction)
-             .await?;
- 
--            let (participant_count,): (i64,) =
--                sqlx::query_as("SELECT COUNT(*) FROM participants WHERE game_id = ?")
--                    .bind(session_id)
--                    .fetch_one(&mut *transaction)
--                    .await?;
-+            let (participant_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM participants WHERE game_id = ?")
-+                .bind(session_id)
-+                .fetch_one(&mut *transaction)
-+                .await?;
- 
-             if participant_count == 0 {
-                 sqlx::query(
-Diff in /home/runner/work/5th-echelon/5th-echelon/dedicated_server/src/storage/mod.rs:389:
-             .fetch_all(&self.pool))??
-         } else {
-             run(
--                sqlx::query_as(
--                    "SELECT type_id as session_type, id as session_id, creator_id, attributes FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL",
--                )
-+                sqlx::query_as("SELECT type_id as session_type, id as session_id, creator_id, attributes FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL")
-                     .bind(type_id)
-                     .fetch_all(&self.pool),
-             )??
-Diff in /home/runner/work/5th-echelon/5th-echelon/quazal/src/prudp/packet.rs:185:
- #[derive(Debug, Copy, Clone)]
- pub enum PacketFlag {
-     /// Acknowledgment flag.
--    Ack = 0b0001,      // 1
-+    Ack = 0b0001, // 1
-     /// Reliable delivery flag.
-     Reliable = 0b0010, // 2
-     /// Acknowledgment is required.
-Diff in /home/runner/work/5th-echelon/5th-echelon/quazal/src/prudp/packet.rs:192:
--    NeedAck = 0b0100,  // 4
-+    NeedAck = 0b0100, // 4
-     /// The packet has a size field.
--    HasSize = 0b1000,  // 8
-+    HasSize = 0b1000, // 8
- }
- 
- /// Represents a PRUDP packet.
-Diff in /home/runner/work/5th-echelon/5th-echelon/quazal/src/prudp/packet.rs:593:
-         assert!(parse(ctx, &mut Cursor::new(data)).is_ok());
-     }
- }
-+
+ dedicated_server/src/game_session.rs  | 21 ++++++---------------
+ dedicated_server/src/overlord_core.rs |  2 +-
+ dedicated_server/src/overlord_news.rs | 20 ++++++++++----------
+ dedicated_server/src/storage/mod.rs   | 13 +++++--------
+ quazal/src/prudp/packet.rs            |  8 ++++----
+ 5 files changed, 26 insertions(+), 38 deletions(-)
 ```
 
 ## rust-toolchain.log
@@ -480,18 +366,18 @@ warning: methods `register_user`, `find_user_by_ubi_id`, `find_user_by_id`, and 
     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
 warning: field `receiver` is never read
-   --> dedicated_server/src/storage/mod.rs:695:9
+   --> dedicated_server/src/storage/mod.rs:692:9
     |
-692 | pub struct Invite {
+689 | pub struct Invite {
     |            ------ field in this struct
 ...
-695 |     pub receiver: u32,
+692 |     pub receiver: u32,
     |         ^^^^^^^^
     |
     = note: `Invite` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
 
 warning: `dedicated_server` (bin "dedicated_server" test) generated 2 warnings
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 42s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 46s
      Running unittests src/bin/cli.rs (target/debug/deps/cli-7a15a53dad806cb0)
 
 running 0 tests
@@ -502,8 +388,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 running 3 tests
 test overlord_challenge::tests::parse_sample ... ok
-test overlord_core::tests::test_method1 ... ok
 test overlord_news::tests::parse_sample ... ok
+test overlord_core::tests::test_method1 ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
