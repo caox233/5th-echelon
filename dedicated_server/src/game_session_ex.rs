@@ -84,8 +84,19 @@ impl<CI> GameSessionExProtocolServerTrait<CI> for GameSessionExProtocolServerImp
         }
         let sessions: Vec<_> = sessions
             .into_iter()
-            .filter(|session| {
-                let sess_attrs: QList<Property> = session.attributes.parse().unwrap();
+            .filter_map(|session| {
+                let sess_attrs: QList<Property> = match session.attributes.parse() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        warn!(
+                            logger,
+                            "Ignoring game session with malformed attributes";
+                            "session_id" => session.session_id,
+                            "session_type" => session.session_type,
+                        );
+                        return None;
+                    }
+                };
                 let sess_attrs = sess_attrs.0.into_iter().map(|p| (p.id, p.value)).collect::<HashMap<_, _>>();
                 for (id, value) in &req_attrs {
                     if *id == 112 {
@@ -94,10 +105,10 @@ impl<CI> GameSessionExProtocolServerTrait<CI> for GameSessionExProtocolServerImp
                         continue;
                     }
                     if sess_attrs.get(id) != Some(value) {
-                        return false;
+                        return None;
                     }
                 }
-                true
+                Some(session)
             })
             .collect();
         info!(logger, "Found sessions {sessions:?}");
@@ -105,33 +116,74 @@ impl<CI> GameSessionExProtocolServerTrait<CI> for GameSessionExProtocolServerImp
             search_results: QList(
                 sessions
                     .into_iter()
-                    .map(|session| GameSessionSearchResultEx {
-                        game_session_search_result: GameSessionSearchResult {
-                            session_key: GameSessionKey {
-                                session_id: session.session_id,
-                                type_id: session.session_type,
-                            },
-                            host_pid: session.creator_id,
-                            host_urls: session
-                                .participants
-                                .iter()
-                                .filter(|p| p.user_id == session.creator_id)
-                                .flat_map(|p| p.station_urls.iter())
-                                .map(|u| u.parse().unwrap())
-                                .collect(),
-                            attributes: session.attributes.parse().unwrap(),
-                        },
-                        participants: QList(
-                            session
-                                .participants
-                                .into_iter()
-                                .map(|participant| GameSessionParticipant {
+                    .filter_map(|session| {
+                        let attributes = match session.attributes.parse() {
+                            Ok(value) => value,
+                            Err(_) => {
+                                warn!(
+                                    logger,
+                                    "Ignoring game session whose response attributes cannot be encoded";
+                                    "session_id" => session.session_id,
+                                    "session_type" => session.session_type,
+                                );
+                                return None;
+                            }
+                        };
+                        let host_urls = session
+                            .participants
+                            .iter()
+                            .filter(|p| p.user_id == session.creator_id)
+                            .flat_map(|p| p.station_urls.iter())
+                            .filter_map(|url| {
+                                let parsed = url.parse().ok();
+                                if parsed.is_none() {
+                                    warn!(
+                                        logger,
+                                        "Ignoring malformed host station URL";
+                                        "session_id" => session.session_id,
+                                        "host_pid" => session.creator_id,
+                                        "url" => url.clone(),
+                                    );
+                                }
+                                parsed
+                            })
+                            .collect();
+                        let participants = session
+                            .participants
+                            .into_iter()
+                            .filter_map(|participant| {
+                                let station_urls = match participant.station_urls.try_into() {
+                                    Ok(value) => value,
+                                    Err(_) => {
+                                        warn!(
+                                            logger,
+                                            "Ignoring participant with an invalid station URL list";
+                                            "session_id" => session.session_id,
+                                            "participant_pid" => participant.user_id,
+                                        );
+                                        return None;
+                                    }
+                                };
+                                Some(GameSessionParticipant {
                                     pid: participant.user_id,
                                     name: participant.name,
-                                    station_urls: participant.station_urls.try_into().unwrap(),
+                                    station_urls,
                                 })
-                                .collect(),
-                        ),
+                            })
+                            .collect();
+
+                        Some(GameSessionSearchResultEx {
+                            game_session_search_result: GameSessionSearchResult {
+                                session_key: GameSessionKey {
+                                    session_id: session.session_id,
+                                    type_id: session.session_type,
+                                },
+                                host_pid: session.creator_id,
+                                host_urls,
+                                attributes,
+                            },
+                            participants: QList(participants),
+                        })
                     })
                     .collect(),
             ),
