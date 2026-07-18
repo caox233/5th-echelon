@@ -253,6 +253,122 @@ impl Storage {
         Ok(id as u32)
     }
 
+    /// Removes a user from an active game session.
+    ///
+    /// The operation is idempotent because the game may send both
+    /// `AbandonSession` and `LeaveSession` for the same transition. When the
+    /// final participant leaves, the session is marked as destroyed so it can
+    /// no longer be returned by matchmaking searches.
+    pub fn leave_game_session(&self, user_id: u32, type_id: u32, session_id: u32) -> Result<()> {
+        run(async {
+            let mut transaction = self.pool.begin().await?;
+
+            sqlx::query(
+                r"
+                DELETE FROM participants
+                WHERE game_id = ?
+                  AND user_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM game_sessions
+                      WHERE id = ?
+                        AND type_id = ?
+                        AND destroyed_at IS NULL
+                  )
+                ",
+            )
+            .bind(session_id)
+            .bind(user_id)
+            .bind(session_id)
+            .bind(type_id)
+            .execute(&mut *transaction)
+            .await?;
+
+            let (participant_count,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM participants WHERE game_id = ?")
+                    .bind(session_id)
+                    .fetch_one(&mut *transaction)
+                    .await?;
+
+            if participant_count == 0 {
+                sqlx::query(
+                    r"
+                    UPDATE game_sessions
+                    SET destroyed_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                      AND type_id = ?
+                      AND destroyed_at IS NULL
+                    ",
+                )
+                .bind(session_id)
+                .bind(type_id)
+                .execute(&mut *transaction)
+                .await?;
+            }
+
+            transaction.commit().await
+        })??;
+
+        Ok(())
+    }
+
+    /// Transfers ownership of an active game session to a remaining
+    /// participant. `SplitSession` does not carry a separate host PID, so the
+    /// authenticated caller is the new host selected by the game client.
+    ///
+    /// Returns `false` when the session is not active or the caller is not a
+    /// participant. Returning a boolean lets the protocol layer map an invalid
+    /// migration request to `AccessDenied` without exposing storage details.
+    pub fn migrate_game_session_host(&self, user_id: u32, type_id: u32, session_id: u32) -> Result<bool> {
+        let migrated = run(async {
+            let mut transaction = self.pool.begin().await?;
+
+            let (is_participant,): (i64,) = sqlx::query_as(
+                r"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM game_sessions AS g
+                    INNER JOIN participants AS p ON p.game_id = g.id
+                    WHERE g.id = ?
+                      AND g.type_id = ?
+                      AND g.destroyed_at IS NULL
+                      AND p.user_id = ?
+                )
+                ",
+            )
+            .bind(session_id)
+            .bind(type_id)
+            .bind(user_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+
+            if is_participant == 0 {
+                transaction.rollback().await?;
+                return Ok::<bool, sqlx::Error>(false);
+            }
+
+            let result = sqlx::query(
+                r"
+                UPDATE game_sessions
+                SET creator_id = ?
+                WHERE id = ?
+                  AND type_id = ?
+                  AND destroyed_at IS NULL
+                ",
+            )
+            .bind(user_id)
+            .bind(session_id)
+            .bind(type_id)
+            .execute(&mut *transaction)
+            .await?;
+
+            transaction.commit().await?;
+            Ok::<bool, sqlx::Error>(result.rows_affected() == 1)
+        })??;
+
+        Ok(migrated)
+    }
+
     pub fn update_game_session(&self, type_id: u32, game_id: u32, attributes: String) -> Result<()> {
         let _id = run(sqlx::query("UPDATE game_sessions SET attributes = ? WHERE id = ? AND type_id = ?")
             .bind(attributes)
@@ -273,7 +389,9 @@ impl Storage {
             .fetch_all(&self.pool))??
         } else {
             run(
-                sqlx::query_as("SELECT type_id as session_type, id as session_id FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL")
+                sqlx::query_as(
+                    "SELECT type_id as session_type, id as session_id, creator_id, attributes FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL",
+                )
                     .bind(type_id)
                     .fetch_all(&self.pool),
             )??
@@ -299,6 +417,16 @@ impl Storage {
                 .collect();
             }
         }
+
+        // A joinable session must have a live host participant and at least one
+        // registered endpoint. This hides the brief handover window after the old
+        // host leaves and also prevents stale sessions from being returned.
+        sessions.retain(|session| {
+            session
+                .participants
+                .iter()
+                .any(|participant| participant.user_id == session.creator_id && !participant.station_urls.is_empty())
+        });
 
         Ok(sessions)
     }
@@ -451,6 +579,14 @@ impl Storage {
                 .collect();
             }
         }
+
+        sessions.retain(|session| {
+            session
+                .participants
+                .iter()
+                .any(|participant| participant.user_id == session.creator_id && !participant.station_urls.is_empty())
+        });
+
         Ok(sessions)
     }
 
