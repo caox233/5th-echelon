@@ -155,19 +155,26 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
     }
 
     /// Handles the `LeaveSession` request.
-    ///
-    /// This function requires the client to be logged in. It currently returns an empty response.
     fn leave_session(
         &self,
-        _logger: &Logger,
+        logger: &Logger,
         _ctx: &Context,
         ci: &mut ClientInfo<CI>,
-        _request: LeaveSessionRequest,
+        request: LeaveSessionRequest,
         _client_registry: &ClientRegistry<CI>,
         _socket: &std::net::UdpSocket,
     ) -> Result<LeaveSessionResponse, Error> {
-        // Ensure the client is logged in.
-        login_required(&*ci)?;
+        let user_id = login_required(&*ci)?;
+        info!(logger, "Client leaves session: {:?}", request);
+        rmc_err!(
+            self.storage.leave_game_session(
+                user_id,
+                request.game_session_key.type_id,
+                request.game_session_key.session_id,
+            ),
+            logger,
+            "error leaving game session"
+        )?;
         Ok(LeaveSessionResponse)
     }
 
@@ -224,19 +231,26 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
     }
 
     /// Handles the `AbandonSession` request.
-    ///
-    /// This function requires the client to be logged in. It currently returns an empty response.
     fn abandon_session(
         &self,
-        _logger: &Logger,
+        logger: &Logger,
         _ctx: &Context,
         ci: &mut ClientInfo<CI>,
-        _request: AbandonSessionRequest,
+        request: AbandonSessionRequest,
         _client_registry: &ClientRegistry<CI>,
         _socket: &std::net::UdpSocket,
     ) -> Result<AbandonSessionResponse, Error> {
-        // Ensure the client is logged in.
-        login_required(&*ci)?;
+        let user_id = login_required(&*ci)?;
+        info!(logger, "Client abandons session: {:?}", request);
+        rmc_err!(
+            self.storage.leave_game_session(
+                user_id,
+                request.game_session_key.type_id,
+                request.game_session_key.session_id,
+            ),
+            logger,
+            "error abandoning game session"
+        )?;
         Ok(AbandonSessionResponse)
     }
 
@@ -292,9 +306,13 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         Ok(SearchSessionsWithParticipantsResponse {
             search_results: sessions
                 .into_iter()
-                .map(|session| {
-                    let host = session.participants.iter().find(|p| p.user_id == session.creator_id).unwrap();
-                    GameSessionSearchWithParticipantsResult {
+                .filter_map(|session| {
+                    let Some(host) = session.participants.iter().find(|p| p.user_id == session.creator_id) else {
+                        warn!(logger, "Ignoring session without a valid host participant"; "session_id" => session.session_id);
+                        return None;
+                    };
+
+                    Some(GameSessionSearchWithParticipantsResult {
                         game_session_search_result: GameSessionSearchResult {
                             session_key: GameSessionKey {
                                 type_id: session.session_type,
@@ -305,26 +323,46 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
                             attributes: session.attributes.as_str().parse().unwrap(),
                         },
                         participant_ids: session.participants.into_iter().map(|p| p.user_id).collect(),
-                    }
+                    })
                 })
                 .collect(),
         })
     }
 
     /// Handles the `SplitSession` request.
-    ///
-    /// This function requires the client to be logged in. It currently returns a placeholder response.
     fn split_session(
         &self,
-        _logger: &Logger,
+        logger: &Logger,
         _ctx: &Context,
         ci: &mut ClientInfo<CI>,
         request: SplitSessionRequest,
         _client_registry: &ClientRegistry<CI>,
         _socket: &std::net::UdpSocket,
     ) -> Result<SplitSessionResponse, Error> {
-        // Ensure the client is logged in.
-        let _user_id = login_required(&*ci)?;
+        let user_id = login_required(&*ci)?;
+        info!(logger, "Client migrates session host: {:?}", request);
+
+        let migrated = rmc_err!(
+            self.storage.migrate_game_session_host(
+                user_id,
+                request.game_session_key.type_id,
+                request.game_session_key.session_id,
+            ),
+            logger,
+            "error migrating game session host"
+        )?;
+
+        if !migrated {
+            warn!(
+                logger,
+                "Rejected game session host migration";
+                "session_id" => request.game_session_key.session_id,
+                "type_id" => request.game_session_key.type_id,
+                "new_host_pid" => user_id,
+            );
+            return Err(Error::AccessDenied);
+        }
+
         Ok(SplitSessionResponse {
             game_session_key_migrated: request.game_session_key,
         })
