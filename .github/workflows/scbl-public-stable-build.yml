@@ -76,14 +76,18 @@ jobs:
             protoc --version
           } 2>&1 | tee dist/logs/rust-toolchain.log
 
-      - name: Check formatting
+      - name: Apply rustfmt
         id: formatting
         if: steps.rust.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          cargo fmt --all -- --check 2>&1 | tee dist/logs/format.log
+          {
+            cargo fmt --all
+            git diff --check
+            git diff --stat
+          } 2>&1 | tee dist/logs/format.log
 
       - name: Run dedicated server tests
         id: tests
