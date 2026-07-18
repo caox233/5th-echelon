@@ -1,0 +1,130 @@
+name: Build SCBL dedicated server
+
+on:
+  push:
+    branches:
+      - scbl-public-stable
+    paths:
+      - ".github/workflows/scbl-public-stable-build.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "api/**"
+      - "dedicated_server/**"
+      - "quazal/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scbl-public-stable-release
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: nightly-2025-10-15
+  RELEASE_TAG: scbl-public-stable-latest
+
+jobs:
+  build-linux-x86_64:
+    name: Linux x86_64 release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout scbl-public-stable
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            protobuf-compiler \
+            libssl-dev \
+            libsqlite3-dev \
+            libsodium-dev
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+          rustup override set "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+          protoc --version
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run dedicated server tests
+        run: cargo test --locked -p dedicated_server
+
+      - name: Build dedicated server
+        run: cargo build --locked --release -p dedicated_server
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d dist
+          install -m 0755 target/release/dedicated_server dist/dedicated_server-linux-x86_64
+          file dist/dedicated_server-linux-x86_64
+          sha256sum dist/dedicated_server-linux-x86_64 \
+            | tee dist/dedicated_server-linux-x86_64.sha256
+          printf '%s\n' "$GITHUB_SHA" > dist/commit_sha.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated_server-linux-x86_64-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish rolling SCBL release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          SCBL 专用滚动构建。
+
+          来源分支：scbl-public-stable
+          提交：$GITHUB_SHA
+          Rust：$RUST_TOOLCHAIN
+          平台：Linux x86_64
+
+          安装脚本会同时下载 dedicated_server-linux-x86_64 和 SHA256 文件，校验通过后才替换正式服务端。
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "SCBL dedicated server stable" \
+              --notes-file "$notes_file" \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "SCBL dedicated server stable" \
+              --notes-file "$notes_file" \
+              --prerelease
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            dist/dedicated_server-linux-x86_64 \
+            dist/dedicated_server-linux-x86_64.sha256 \
+            dist/commit_sha.txt \
+            --clobber
