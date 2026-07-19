@@ -3,7 +3,7 @@ name: Record SCBL binary build status
 on:
   workflow_run:
     workflows: ['Build SCBL 5th binaries']
-    types: [completed]
+    types: [requested, completed]
 
 permissions:
   contents: write
@@ -19,7 +19,8 @@ jobs:
           fetch-depth: 0
       - name: Record result
         env:
-          RESULT: ${{ github.event.workflow_run.conclusion }}
+          RUN_STATUS: ${{ github.event.workflow_run.status }}
+          RESULT: ${{ github.event.workflow_run.conclusion || 'pending' }}
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
@@ -30,6 +31,7 @@ jobs:
           cat > .github/SCBL_BINARY_STATUS.md <<EOF
           # SCBL 5th binary build status
 
+          - Status: **${RUN_STATUS}**
           - Result: **${RESULT}**
           - Source commit: \`${SOURCE_SHA}\`
           - Workflow run: [${RUN_ID}](${RUN_URL})
@@ -39,4 +41,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add .github/SCBL_BINARY_STATUS.md
           git commit -m 'ci: record SCBL binary build status [skip ci]' || exit 0
+          git pull --rebase origin main
           git push origin HEAD:main
