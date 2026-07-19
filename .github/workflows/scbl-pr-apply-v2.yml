@@ -1,0 +1,61 @@
+name: Apply SCBL integration from PR v2
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'scbl-v0.6.2-integration'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scbl-v0.6.2-integration
+          fetch-depth: 0
+      - name: Execute integration script with robust source anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/scbl-integration-apply.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(lines) if line == '        run: |') + 1
+          body = []
+          for line in lines[start:]:
+              if line and not line.startswith('          '):
+                  break
+              body.append(line[10:] if line.startswith('          ') else '')
+          script = '\n'.join(body) + '\n'
+          old = """if 'pub fn join_game_session' not in storage:
+              if old_create not in storage:
+                  raise SystemExit('create_game_session anchor not found')
+              storage = storage.replace(old_create, new_create, 1)"""
+          new = """if 'pub fn join_game_session' not in storage:
+              import re
+              pattern = r'    pub fn create_game_session\\(&self, user_id: u32, type_id: u32, attributes: String\\) -> Result<u32> \\{.*?^    \\}\\n(?=\\n    /// Removes a user from an active game session\\.)'
+              storage, count = re.subn(pattern, new_create.rstrip(), storage, count=1, flags=re.S | re.M)
+              if count != 1:
+                  raise SystemExit('create_game_session regex anchor not found')"""
+          if old not in script:
+              raise SystemExit('storage patch source not found in integration script')
+          script = script.replace(old, new, 1)
+          old = """if 'Client joins session:' not in gs:
+              if old_join not in gs:
+                  raise SystemExit('join_session anchor not found')
+              gs = gs.replace(old_join, new_join, 1)"""
+          new = """if 'Client joins session:' not in gs:
+              import re
+              pattern = r'    /// Handles the `JoinSession` request\\..*?^    \\}\\n(?=\\})'
+              gs, count = re.subn(pattern, new_join.rstrip(), gs, count=1, flags=re.S | re.M)
+              if count != 1:
+                  raise SystemExit('join_session regex anchor not found')"""
+          if old not in script:
+              raise SystemExit('join patch source not found in integration script')
+          script = script.replace(old, new, 1)
+          Path('/tmp/scbl-apply-v2.sh').write_text(script, encoding='utf-8')
+          PY
+          bash /tmp/scbl-apply-v2.sh
