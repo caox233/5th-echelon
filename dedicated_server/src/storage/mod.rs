@@ -241,18 +241,53 @@ impl Storage {
     }
 
     pub fn create_game_session(&self, user_id: u32, type_id: u32, attributes: String) -> Result<u32> {
-        let id = run(sqlx::query("INSERT INTO game_sessions (type_id, creator_id, attributes) VALUES (?, ?, ?)")
-            .bind(type_id)
-            .bind(user_id)
-            .bind(attributes)
-            .execute(&self.pool))??
-        .last_insert_rowid();
+        let id = run(async {
+            let mut transaction = self.pool.begin().await?;
+            let id = sqlx::query("INSERT INTO game_sessions (type_id, creator_id, attributes) VALUES (?, ?, ?)")
+                .bind(type_id)
+                .bind(user_id)
+                .bind(attributes)
+                .execute(&mut *transaction)
+                .await?
+                .last_insert_rowid();
+            sqlx::query("INSERT OR IGNORE INTO participants (game_id, user_id) VALUES (?, ?)")
+                .bind(id)
+                .bind(user_id)
+                .execute(&mut *transaction)
+                .await?;
+            transaction.commit().await?;
+            Ok::<i64, sqlx::Error>(id)
+        })??;
 
         #[allow(clippy::cast_possible_truncation)]
         #[allow(clippy::cast_sign_loss)]
         Ok(id as u32)
     }
 
+    pub fn join_game_session(&self, user_id: u32, type_id: u32, session_id: u32) -> Result<bool> {
+        let joined = run(async {
+            let result = sqlx::query(
+                r"INSERT OR IGNORE INTO participants (game_id, user_id)
+               SELECT id, ? FROM game_sessions
+               WHERE id = ? AND type_id = ? AND destroyed_at IS NULL",
+            )
+            .bind(user_id)
+            .bind(session_id)
+            .bind(type_id)
+            .execute(&self.pool)
+            .await?;
+            let (valid,): (i64,) = sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM participants p JOIN game_sessions g ON g.id=p.game_id WHERE p.game_id=? AND p.user_id=? AND g.type_id=? AND g.destroyed_at IS NULL)",
+            )
+            .bind(session_id)
+            .bind(user_id)
+            .bind(type_id)
+            .fetch_one(&self.pool)
+            .await?;
+            Ok::<bool, sqlx::Error>(result.rows_affected() <= 1 && valid == 1)
+        })??;
+        Ok(joined)
+    }
     /// Removes a user from an active game session.
     ///
     /// The operation is idempotent because the game may send both
@@ -284,11 +319,10 @@ impl Storage {
             .execute(&mut *transaction)
             .await?;
 
-            let (participant_count,): (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM participants WHERE game_id = ?")
-                    .bind(session_id)
-                    .fetch_one(&mut *transaction)
-                    .await?;
+            let (participant_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM participants WHERE game_id = ?")
+                .bind(session_id)
+                .fetch_one(&mut *transaction)
+                .await?;
 
             if participant_count == 0 {
                 sqlx::query(
@@ -389,9 +423,7 @@ impl Storage {
             .fetch_all(&self.pool))??
         } else {
             run(
-                sqlx::query_as(
-                    "SELECT type_id as session_type, id as session_id, creator_id, attributes FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL",
-                )
+                sqlx::query_as("SELECT type_id as session_type, id as session_id, creator_id, attributes FROM game_sessions WHERE type_id = ? AND destroyed_at IS NULL")
                     .bind(type_id)
                     .fetch_all(&self.pool),
             )??
