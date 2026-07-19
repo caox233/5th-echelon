@@ -16,6 +16,11 @@ jobs:
         with:
           ref: scbl-v0.6.2-integration
           fetch-depth: 0
+      - name: Install pinned formatter
+        shell: bash
+        run: |
+          rustup toolchain install nightly-2025-10-15 --profile minimal --component rustfmt
+          rustup override set nightly-2025-10-15
       - name: Execute integration script with robust source anchors
         shell: bash
         run: |
