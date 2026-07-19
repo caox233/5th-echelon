@@ -1,24 +1,24 @@
-name: Build SCBL dedicated server
+name: Build SCBL 5th binaries
 
 on:
   push:
-    branches:
-      - scbl-public-stable
+    branches: [main]
     paths:
-      - ".github/workflows/scbl-public-stable-build.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "api/**"
-      - "dedicated_server/**"
-      - "quazal/**"
+      - '.github/workflows/scbl-public-stable-build.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'api/**'
+      - 'dedicated_server/**'
+      - 'hooks/**'
+      - 'quazal/**'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: scbl-public-stable-release
+  group: scbl-5th-binaries
   cancel-in-progress: true
 
 env:
@@ -26,249 +26,136 @@ env:
   RELEASE_TAG: scbl-public-stable-latest
 
 jobs:
-  build-linux-x86_64:
-    name: Linux x86_64 release
+  dedicated-linux:
+    name: Dedicated server Linux x86_64
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-
     steps:
-      - name: Checkout scbl-public-stable
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: scbl-public-stable
-
-      - name: Prepare diagnostics directory
-        run: mkdir -p dist/logs
-
-      - name: Install Linux build dependencies
-        id: dependencies
-        continue-on-error: true
+      - name: Install build dependencies
         shell: bash
         run: |
-          set -o pipefail
-          {
-            sudo apt-get update
-            sudo apt-get install -y \
-              build-essential \
-              pkg-config \
-              protobuf-compiler \
-              libssl-dev \
-              libsqlite3-dev \
-              libsodium-dev
-          } 2>&1 | tee dist/logs/dependencies.log
-
-      - name: Install pinned Rust toolchain
-        id: rust
-        if: steps.dependencies.outcome == 'success'
-        continue-on-error: true
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config protobuf-compiler libssl-dev libsqlite3-dev libsodium-dev
+      - name: Install pinned Rust
         shell: bash
         run: |
-          set -o pipefail
-          {
-            rustup toolchain install "$RUST_TOOLCHAIN" \
-              --profile minimal \
-              --component rustfmt \
-              --component clippy
-            rustup override set "$RUST_TOOLCHAIN"
-            rustc --version
-            cargo --version
-            protoc --version
-          } 2>&1 | tee dist/logs/rust-toolchain.log
-
-      - name: Apply rustfmt
-        id: formatting
-        if: steps.rust.outcome == 'success'
-        continue-on-error: true
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup override set "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
+          protoc --version
+      - name: Check formatting and tests
         shell: bash
         run: |
-          set -o pipefail
-          {
-            cargo fmt --all
-            git diff --check
-            git diff --stat
-          } 2>&1 | tee dist/logs/format.log
-
-      - name: Run dedicated server tests
-        id: tests
-        if: steps.rust.outcome == 'success'
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test --locked -p dedicated_server 2>&1 | tee dist/logs/tests.log
-
+          cargo fmt --all -- --check
+          cargo test --locked -p dedicated_server
       - name: Build dedicated server
-        id: build
-        if: steps.rust.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
-          cargo build --locked --release -p dedicated_server 2>&1 | tee dist/logs/build.log
+          cargo build --locked --release -p dedicated_server
+          mkdir -p dist
+          install -m 0755 target/release/dedicated_server dist/dedicated_server-linux-x86_64
+          file dist/dedicated_server-linux-x86_64
+          sha256sum dist/dedicated_server-linux-x86_64 > dist/dedicated_server-linux-x86_64.sha256
+          printf '%s\n' "$GITHUB_SHA" > dist/commit_sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scbl-dedicated-linux
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
 
-      - name: Prepare release files
-        id: prepare
-        if: steps.build.outcome == 'success'
-        continue-on-error: true
+  hooks-windows:
+    name: Hooks Windows x86
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install protoc
+        shell: powershell
+        run: choco install protoc -y --no-progress
+      - name: Install pinned Rust and target
+        shell: powershell
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component rustfmt
+          rustup target add i686-pc-windows-msvc --toolchain $env:RUST_TOOLCHAIN
+          rustup override set $env:RUST_TOOLCHAIN
+          rustc --version
+          cargo --version
+          protoc --version
+      - name: Check formatting and build Hooks
+        shell: powershell
+        run: |
+          cargo fmt --all -- --check
+          cargo build --locked --release -p hooks --target i686-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $dll = 'target\i686-pc-windows-msvc\release\hooks.dll'
+          if (!(Test-Path -LiteralPath $dll)) { throw "Hooks DLL was not generated: $dll" }
+          Copy-Item -Force $dll 'dist\uplay_r1_loader.dll'
+          $loader = 'target\i686-pc-windows-msvc\release\hook-loader.exe'
+          if (Test-Path -LiteralPath $loader) { Copy-Item -Force $loader 'dist\hook-loader.exe' }
+          $hash = (Get-FileHash 'dist\uplay_r1_loader.dll' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  uplay_r1_loader.dll" | Set-Content -Encoding ascii 'dist\uplay_r1_loader.dll.sha256'
+          Get-ChildItem dist | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scbl-hooks-windows-x86
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish rolling binaries
+    needs: [dedicated-linux, hooks-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scbl-*
+          path: dist
+          merge-multiple: true
+      - name: Validate assets
         shell: bash
         run: |
           set -euo pipefail
-          install -m 0755 target/release/dedicated_server dist/dedicated_server-linux-x86_64
-          file dist/dedicated_server-linux-x86_64 | tee dist/logs/file.log
-          file dist/dedicated_server-linux-x86_64 | grep -Eq 'ELF 64-bit.*x86-64|ELF 64-bit.*x86_64'
-          sha256sum dist/dedicated_server-linux-x86_64 \
-            | tee dist/dedicated_server-linux-x86_64.sha256
-          printf '%s\n' "$GITHUB_SHA" > dist/commit_sha.txt
-
-      - name: Publish rolling SCBL release
-        id: release
-        if: >-
-          steps.dependencies.outcome == 'success' &&
-          steps.rust.outcome == 'success' &&
-          steps.formatting.outcome == 'success' &&
-          steps.tests.outcome == 'success' &&
-          steps.build.outcome == 'success' &&
-          steps.prepare.outcome == 'success'
-        continue-on-error: true
+          test -s dist/dedicated_server-linux-x86_64
+          test -s dist/dedicated_server-linux-x86_64.sha256
+          test -s dist/uplay_r1_loader.dll
+          test -s dist/uplay_r1_loader.dll.sha256
+          sha256sum -c dist/dedicated_server-linux-x86_64.sha256
+          (cd dist && sha256sum -c uplay_r1_loader.dll.sha256)
+          ls -lah dist
+      - name: Publish rolling SCBL 5th release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$RELEASE_TAG" --force
-
           notes_file="$(mktemp)"
           cat > "$notes_file" <<EOF
-          SCBL 专用滚动构建。
+          SCBL 专用 5th 滚动构建。
 
-          来源分支：scbl-public-stable
+          来源分支：main
           提交：$GITHUB_SHA
           Rust：$RUST_TOOLCHAIN
-          平台：Linux x86_64
 
-          安装脚本会同时下载 dedicated_server-linux-x86_64 和 SHA256 文件，校验通过后才替换正式服务端。
+          本 Release 同时提供 Linux dedicated_server 与 Windows x86 Hooks DLL。
           EOF
-
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --title "SCBL dedicated server stable" \
-              --notes-file "$notes_file" \
-              --prerelease
+            gh release edit "$RELEASE_TAG" --title 'SCBL 5th stable binaries' --notes-file "$notes_file" --prerelease
           else
-            gh release create "$RELEASE_TAG" \
-              --title "SCBL dedicated server stable" \
-              --notes-file "$notes_file" \
-              --prerelease
+            gh release create "$RELEASE_TAG" --title 'SCBL 5th stable binaries' --notes-file "$notes_file" --prerelease
           fi
-
-          gh release upload "$RELEASE_TAG" \
-            dist/dedicated_server-linux-x86_64 \
-            dist/dedicated_server-linux-x86_64.sha256 \
-            dist/commit_sha.txt \
-            --clobber
-
-      - name: Write branch build status
-        if: always()
-        env:
-          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
-          RUST_OUTCOME: ${{ steps.rust.outcome }}
-          FORMATTING_OUTCOME: ${{ steps.formatting.outcome }}
-          TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
-          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
-          RELEASE_OUTCOME: ${{ steps.release.outcome }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          status_file=".github/SCBL_BUILD_STATUS.md"
-          overall="success"
-          for value in \
-            "$DEPENDENCIES_OUTCOME" \
-            "$RUST_OUTCOME" \
-            "$FORMATTING_OUTCOME" \
-            "$TESTS_OUTCOME" \
-            "$BUILD_OUTCOME" \
-            "$PREPARE_OUTCOME" \
-            "$RELEASE_OUTCOME"; do
-            if [[ "$value" != "success" ]]; then
-              overall="failure"
-              break
-            fi
-          done
-
-          {
-            echo "# SCBL dedicated server build status"
-            echo
-            echo "- Result: **$overall**"
-            echo "- Source commit: \`$GITHUB_SHA\`"
-            echo "- Workflow run: \`$GITHUB_RUN_ID\`"
-            echo "- Updated UTC: \`$(date -u +'%Y-%m-%dT%H:%M:%SZ')\`"
-            echo
-            echo "| Step | Outcome |"
-            echo "|---|---|"
-            echo "| Dependencies | $DEPENDENCIES_OUTCOME |"
-            echo "| Rust toolchain | $RUST_OUTCOME |"
-            echo "| Formatting | $FORMATTING_OUTCOME |"
-            echo "| Tests | $TESTS_OUTCOME |"
-            echo "| Release build | $BUILD_OUTCOME |"
-            echo "| Artifact validation | $PREPARE_OUTCOME |"
-            echo "| GitHub Release | $RELEASE_OUTCOME |"
-            echo
-            for log in dist/logs/*.log; do
-              [[ -f "$log" ]] || continue
-              echo "## $(basename "$log")"
-              echo
-              echo '```text'
-              tail -n 120 "$log"
-              echo '```'
-              echo
-            done
-          } > "$status_file"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$status_file"
-          if ! git diff --cached --quiet; then
-            git commit -m "ci: record SCBL build status [skip ci]"
-            git push origin HEAD:scbl-public-stable
-          fi
-
-      - name: Upload workflow diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scbl-dedicated-server-diagnostics-${{ github.sha }}
-          path: |
-            dist/
-            .github/SCBL_BUILD_STATUS.md
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Fail workflow when validation failed
-        if: always()
-        env:
-          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
-          RUST_OUTCOME: ${{ steps.rust.outcome }}
-          FORMATTING_OUTCOME: ${{ steps.formatting.outcome }}
-          TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
-          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
-          RELEASE_OUTCOME: ${{ steps.release.outcome }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for value in \
-            "$DEPENDENCIES_OUTCOME" \
-            "$RUST_OUTCOME" \
-            "$FORMATTING_OUTCOME" \
-            "$TESTS_OUTCOME" \
-            "$BUILD_OUTCOME" \
-            "$PREPARE_OUTCOME" \
-            "$RELEASE_OUTCOME"; do
-            [[ "$value" == "success" ]] || exit 1
-          done
+          gh release upload "$RELEASE_TAG" dist/* --clobber
