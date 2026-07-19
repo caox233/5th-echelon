@@ -1,1 +1,1 @@
-Temporary trigger for Hooks build diagnostics v2.
+Temporary trigger for Hooks build diagnostics v3.
