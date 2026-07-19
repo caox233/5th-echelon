@@ -23,28 +23,18 @@ jobs:
           from pathlib import Path
           p=Path('hooks/src/hooks/storm.rs')
           text=p.read_text(encoding='utf-8')
-          block='''    static BindSocketHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
-              static ConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
-              static WsaConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int, *mut c_void, *mut c_void, *mut c_void, *mut c_void) -> c_int;
-              static CloseSocketHook: unsafe extern "stdcall" fn(usize) -> c_int;
-          '''
-          first=text.find(block)
-          second=text.find(block, first+1) if first >= 0 else -1
-          if second >= 0:
-              text=text[:second]+text[second+len(block):]
-          elif text.count('static BindSocketHook:') > 1:
-              lines=text.splitlines(True)
-              seen=set(); out=[]
-              names=('BindSocketHook','ConnectHook','WsaConnectHook','CloseSocketHook')
-              for line in lines:
-                  matched=next((n for n in names if f'static {n}:' in line),None)
-                  if matched and matched in seen: continue
-                  if matched: seen.add(matched)
-                  out.append(line)
-              text=''.join(out)
-          p.write_text(text,encoding='utf-8')
+          lines=text.splitlines(True)
+          seen=set(); out=[]
+          names=('BindSocketHook','ConnectHook','WsaConnectHook','CloseSocketHook')
+          for line in lines:
+              matched=next((n for n in names if f'static {n}:' in line),None)
+              if matched and matched in seen:
+                  continue
+              if matched:
+                  seen.add(matched)
+              out.append(line)
+          p.write_text(''.join(out),encoding='utf-8')
           PY
-          cargo fmt --all
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add hooks/src/hooks/storm.rs
