@@ -1,26 +1,37 @@
+use std::collections::HashSet;
 use std::ffi::c_char;
 use std::ffi::c_int;
 use std::ffi::c_void;
 use std::ffi::CStr;
+use std::net::Ipv4Addr;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use dll_syringe::function::FunctionPtr;
 use retour::static_detour;
 use tracing::info;
 use tracing::instrument;
+use tracing::warn;
 use windows::core::s;
 use windows::Win32::Foundation::FreeLibrary;
+use windows::Win32::Networking::WinSock::WSAGetLastError;
 use windows::Win32::Networking::WinSock::AF_INET;
 use windows::Win32::Networking::WinSock::SOCKADDR;
 use windows::Win32::System::LibraryLoader::GetProcAddress;
 use windows::Win32::System::LibraryLoader::LoadLibraryA;
 
 use crate::addresses::Addresses;
+use crate::config;
 use crate::config::Config;
 use crate::config::Hook;
 
 static_detour! {
     static SomeEventHook: unsafe extern "thiscall" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
     static SomeEvent2Hook: unsafe extern "thiscall" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
+    static BindSocketHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
+    static ConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
+    static WsaConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int, *mut c_void, *mut c_void, *mut c_void, *mut c_void) -> c_int;
+    static CloseSocketHook: unsafe extern "stdcall" fn(usize) -> c_int;
     static SendToHook: unsafe extern "stdcall" fn(usize, *const c_char, c_int, c_int, *const SOCKADDR, c_int) -> c_int;
     static RecvFromHook: unsafe extern "stdcall" fn(usize, *const c_char, c_int, c_int, *const SOCKADDR, *mut c_int) -> c_int;
     static EventMaybeQueuePopHook: unsafe extern "thiscall" fn(usize) -> *const  *const *const c_void;
@@ -40,6 +51,173 @@ fn deref_addr<'a, T>(addr: *const T) -> Option<&'a T> {
         return None;
     }
     unsafe { addr.as_ref() }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SockAddrInRaw {
+    sin_family: u16,
+    sin_port: [u8; 2],
+    sin_addr: [u8; 4],
+    sin_zero: [u8; 8],
+}
+
+static BOUND_SOCKETS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+
+fn bound_sockets() -> &'static Mutex<HashSet<usize>> {
+    BOUND_SOCKETS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn get_bind_ip() -> Option<Ipv4Addr> {
+    config::get()?.networking.ip_address
+}
+
+fn sockaddr_ipv4(addr: *const SOCKADDR, len: c_int) -> Option<Ipv4Addr> {
+    if addr.is_null() || len < 8 {
+        return None;
+    }
+    let addr = unsafe { addr.as_ref()? };
+    if addr.sa_family != AF_INET {
+        return None;
+    }
+    Some(Ipv4Addr::new(addr.sa_data[2] as u8, addr.sa_data[3] as u8, addr.sa_data[4] as u8, addr.sa_data[5] as u8))
+}
+
+fn sockaddr_port(addr: *const SOCKADDR, len: c_int) -> Option<u16> {
+    if addr.is_null() || len < 4 {
+        return None;
+    }
+    let addr = unsafe { addr.as_ref()? };
+    if addr.sa_family != AF_INET {
+        return None;
+    }
+    Some(u16::from_be_bytes([addr.sa_data[0] as u8, addr.sa_data[1] as u8]))
+}
+
+fn sockaddr_port_bytes(addr: *const SOCKADDR, len: c_int) -> [u8; 2] {
+    if addr.is_null() || len < 4 {
+        return [0, 0];
+    }
+    unsafe { addr.as_ref() }.map(|addr| [addr.sa_data[0] as u8, addr.sa_data[1] as u8]).unwrap_or([0, 0])
+}
+
+fn is_loopback(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] == 127
+}
+
+fn is_socket_marked_bound(socket: usize) -> bool {
+    bound_sockets().lock().map_or(false, |sockets| sockets.contains(&socket))
+}
+
+fn mark_socket_bound(socket: usize) {
+    if let Ok(mut sockets) = bound_sockets().lock() {
+        sockets.insert(socket);
+    }
+}
+
+fn unmark_socket_bound(socket: usize) {
+    if let Ok(mut sockets) = bound_sockets().lock() {
+        sockets.remove(&socket);
+    }
+}
+
+fn make_bind_addr(bind_ip: Ipv4Addr, port: [u8; 2]) -> SockAddrInRaw {
+    SockAddrInRaw {
+        sin_family: 2,
+        sin_port: port,
+        sin_addr: bind_ip.octets(),
+        sin_zero: [0; 8],
+    }
+}
+
+fn should_rewrite_explicit_bind(original_ip: Ipv4Addr, bind_ip: Ipv4Addr) -> bool {
+    original_ip != bind_ip && !is_loopback(original_ip)
+}
+
+fn force_bind_socket(socket: usize, reason: &str, target: *const SOCKADDR, target_len: c_int) {
+    let Some(bind_ip) = get_bind_ip() else {
+        return;
+    };
+    if is_socket_marked_bound(socket) {
+        return;
+    }
+    let Some(target_ip) = sockaddr_ipv4(target, target_len) else {
+        return;
+    };
+    let target_port = sockaddr_port(target, target_len).unwrap_or(0);
+    let bind_addr = make_bind_addr(bind_ip, [0, 0]);
+    let result = unsafe {
+        BindSocketHook.call(
+            socket,
+            (&bind_addr as *const SockAddrInRaw).cast::<SOCKADDR>(),
+            std::mem::size_of::<SockAddrInRaw>() as c_int,
+        )
+    };
+    mark_socket_bound(socket);
+    if result == 0 {
+        info!("PublicVirtualNet socket bind [{reason}]: socket={socket}, {bind_ip}:0 -> {target_ip}:{target_port}");
+    } else {
+        let err = unsafe { WSAGetLastError() };
+        warn!("PublicVirtualNet socket bind failed [{reason}]: socket={socket}, {bind_ip}:0 -> {target_ip}:{target_port}, wsa_error={err:?}.");
+    }
+}
+
+#[instrument(skip_all)]
+fn bind_socket(socket: usize, name: *const SOCKADDR, namelen: c_int) -> c_int {
+    let Some(bind_ip) = get_bind_ip() else {
+        let result = unsafe { BindSocketHook.call(socket, name, namelen) };
+        if result == 0 {
+            mark_socket_bound(socket);
+        }
+        return result;
+    };
+    let Some(original_ip) = sockaddr_ipv4(name, namelen) else {
+        let result = unsafe { BindSocketHook.call(socket, name, namelen) };
+        if result == 0 {
+            mark_socket_bound(socket);
+        }
+        return result;
+    };
+    if should_rewrite_explicit_bind(original_ip, bind_ip) {
+        let port = sockaddr_port_bytes(name, namelen);
+        let port_number = u16::from_be_bytes(port);
+        let bind_addr = make_bind_addr(bind_ip, port);
+        info!("PublicVirtualNet socket bind rewrite: socket={socket}, {original_ip}:{port_number} -> {bind_ip}:{port_number}");
+        let result = unsafe {
+            BindSocketHook.call(
+                socket,
+                (&bind_addr as *const SockAddrInRaw).cast::<SOCKADDR>(),
+                std::mem::size_of::<SockAddrInRaw>() as c_int,
+            )
+        };
+        if result == 0 {
+            mark_socket_bound(socket);
+        }
+        return result;
+    }
+    let result = unsafe { BindSocketHook.call(socket, name, namelen) };
+    if result == 0 {
+        mark_socket_bound(socket);
+    }
+    result
+}
+
+#[instrument(skip_all)]
+fn connect_socket(socket: usize, name: *const SOCKADDR, namelen: c_int) -> c_int {
+    force_bind_socket(socket, "connect", name, namelen);
+    unsafe { ConnectHook.call(socket, name, namelen) }
+}
+
+#[instrument(skip_all)]
+fn wsa_connect_socket(socket: usize, name: *const SOCKADDR, namelen: c_int, caller_data: *mut c_void, callee_data: *mut c_void, sqos: *mut c_void, gqos: *mut c_void) -> c_int {
+    force_bind_socket(socket, "WSAConnect", name, namelen);
+    unsafe { WsaConnectHook.call(socket, name, namelen, caller_data, callee_data, sqos, gqos) }
+}
+
+#[instrument(skip_all)]
+fn close_socket(socket: usize) -> c_int {
+    unmark_socket_bound(socket);
+    unsafe { CloseSocketHook.call(socket) }
 }
 
 fn get_storm_event_name<'a>(instance_addr: *const c_void) -> Option<&'a CStr> {
@@ -87,6 +265,10 @@ fn some_event2(this: *mut c_void, arg1: *mut c_void, arg2: *mut c_void, arg3: *m
 
 #[instrument(skip_all)]
 fn sendto(s: usize, buf: *const c_char, len: c_int, flag: c_int, to: *const SOCKADDR, tolen: c_int) -> c_int {
+    force_bind_socket(s, "sendto", to, tolen);
+
+    force_bind_socket(s, "sendto", to, tolen);
+
     if let Some(to_ref) = unsafe { to.as_ref() } {
         let port = 13000u16;
         #[allow(clippy::cast_possible_truncation)]
@@ -157,8 +339,12 @@ pub unsafe fn deinit_hooks(config: &Config) {
     super::disable_configurable_hook!(config, Hook::StormEventDispatcher, SomeEvent2Hook);
     super::disable_configurable_hook!(config, Hook::StormEventDispatcher, EventHandlerHook);
     super::disable_configurable_hook!(config, Hook::StormEventDispatcher, EventMaybeQueuePopHook);
-    super::disable_configurable_hook!(config, Hook::StormPackets, SendToHook);
-    super::disable_configurable_hook!(config, Hook::StormPackets, RecvFromHook);
+    let _ = BindSocketHook.disable();
+    let _ = ConnectHook.disable();
+    let _ = WsaConnectHook.disable();
+    let _ = CloseSocketHook.disable();
+    let _ = SendToHook.disable();
+    let _ = RecvFromHook.disable();
 }
 
 #[cfg(test)]

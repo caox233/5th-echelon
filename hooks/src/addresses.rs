@@ -37,8 +37,5 @@ pub fn get() -> Addresses {
 }
 
 fn hash_to_hex(data: [u8; 32]) -> String {
-    data.iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join("")
+    data.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
 }

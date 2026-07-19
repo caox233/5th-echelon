@@ -289,6 +289,62 @@ impl Logging {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct CnAuthConfig {
+    #[serde(rename = "Username")]
+    username: String,
+    #[serde(rename = "Password")]
+    password: String,
+    #[serde(rename = "AccountId")]
+    account_id: Option<String>,
+    #[serde(rename = "ConfigServer")]
+    config_server: String,
+    #[serde(rename = "ApiServer")]
+    api_server: Url,
+    #[serde(rename = "BindIP", alias = "BindIp")]
+    bind_ip: Option<std::net::Ipv4Addr>,
+    #[serde(rename = "EnableOverlay")]
+    enable_overlay: Option<bool>,
+    #[serde(rename = "AutoJoinInvite")]
+    auto_join_invite: Option<bool>,
+}
+
+impl CnAuthConfig {
+    fn into_config(self) -> Config {
+        let mut cfg = default();
+        cfg.user.username = self.username;
+        cfg.user.password = self.password;
+        cfg.user.account_id = self.account_id.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| cfg.user.username.clone());
+        cfg.config_server = if self.config_server.trim().is_empty() { None } else { Some(self.config_server) };
+        cfg.api_server = self.api_server;
+        if let Some(ip) = self.bind_ip {
+            cfg.networking.ip_address = Some(ip);
+        }
+        cfg.enable_overlay = self.enable_overlay.unwrap_or(true);
+        cfg.auto_join_invite = self.auto_join_invite.unwrap_or(false);
+        cfg.enable_hooks.insert(Hook::GetAdaptersInfo);
+        cfg.enable_hooks.insert(Hook::Gethostbyname);
+        cfg
+    }
+}
+
+fn parse_cn_or_standard_config(content: &str) -> anyhow::Result<Config> {
+    match toml::from_str::<CnAuthConfig>(content) {
+        Ok(cn_cfg) => {
+            info!("Loaded CN private auth config format");
+            Ok(cn_cfg.into_config())
+        }
+        Err(cn_err) => match toml::from_str::<Config>(content) {
+            Ok(cfg) => {
+                info!("Loaded standard hooks config format from 5th_auth.dat");
+                Ok(cfg)
+            }
+            Err(std_err) => Err(anyhow::anyhow!(
+                "Failed to parse 5th_auth.dat as CN format: {cn_err}; also failed as standard format: {std_err}"
+            )),
+        },
+    }
+}
 const DEFAULT_CONFIG: &str = r#"
 # Where to find the config server
 ConfigServer = "127.0.0.1"
@@ -493,14 +549,16 @@ fn _get_or_load(path: &Path) -> anyhow::Result<&'static Config> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         #[cfg(target_os = "windows")]
-        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound && msgbox::show_msgbox_ok_cancel("Configuration not found, generate and exit?", "Configuration not found") => {
-            fs::write(path, DEFAULT_CONFIG)?;
-            msgbox::show_msgbox(&format!("Config file placed at {}", path.to_str().unwrap()), "Done");
-            std::process::exit(0);
+        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => {
+            msgbox::show_msgbox(
+                "5th_auth.dat not found.\n\nPlease start the game with SplinterCellCNLauncher.",
+                "CN Launcher config missing",
+            );
+            std::process::exit(1);
         }
         Err(err) => return Err(err.into()),
     };
-    let mut cfg: Config = toml::from_str(&content)?;
+    let mut cfg: Config = parse_cn_or_standard_config(&content)?;
     if cfg.user.cd_keys.is_empty() {
         info!("Passing startup to original dll");
         cfg.forward_calls.push("UPLAY_Startup".into());
@@ -529,7 +587,7 @@ fn _get_or_load(path: &Path) -> anyhow::Result<&'static Config> {
 }
 
 pub fn get_config_path(path: impl AsRef<Path>) -> PathBuf {
-    path.as_ref().join("uplay.toml")
+    path.as_ref().join("5th_auth.dat")
 }
 
 pub fn default() -> Config {

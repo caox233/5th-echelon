@@ -26,6 +26,10 @@ use crate::protocols::game_session_service::game_session_protocol::GameSessionPr
 use crate::protocols::game_session_service::game_session_protocol::GameSessionProtocolServerTrait;
 use crate::protocols::game_session_service::game_session_protocol::LeaveSessionRequest;
 use crate::protocols::game_session_service::game_session_protocol::LeaveSessionResponse;
+use crate::protocols::game_session_service::game_session_protocol::MigrateSessionHostRequest;
+use crate::protocols::game_session_service::game_session_protocol::MigrateSessionHostResponse;
+use crate::protocols::game_session_service::game_session_protocol::MigrateSessionRequest;
+use crate::protocols::game_session_service::game_session_protocol::MigrateSessionResponse;
 use crate::protocols::game_session_service::game_session_protocol::RegisterUrLsRequest;
 use crate::protocols::game_session_service::game_session_protocol::RegisterUrLsResponse;
 use crate::protocols::game_session_service::game_session_protocol::SearchSessionsWithParticipantsRequest;
@@ -154,6 +158,52 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         Ok(DeleteSessionResponse)
     }
 
+    fn migrate_session(
+        &self,
+        logger: &Logger,
+        _ctx: &Context,
+        ci: &mut ClientInfo<CI>,
+        request: MigrateSessionRequest,
+        _client_registry: &ClientRegistry<CI>,
+        _socket: &std::net::UdpSocket,
+    ) -> Result<MigrateSessionResponse, Error> {
+        let user_id = login_required(&*ci)?;
+        let migrated = rmc_err!(
+            self.storage
+                .migrate_game_session_host(user_id, request.game_session_key.type_id, request.game_session_key.session_id),
+            logger,
+            "error migrating game session"
+        )?;
+        if !migrated {
+            return Err(Error::AccessDenied);
+        }
+        Ok(MigrateSessionResponse {
+            game_session_key_migrated: request.game_session_key,
+        })
+    }
+
+    fn migrate_session_host(
+        &self,
+        logger: &Logger,
+        _ctx: &Context,
+        ci: &mut ClientInfo<CI>,
+        request: MigrateSessionHostRequest,
+        _client_registry: &ClientRegistry<CI>,
+        _socket: &std::net::UdpSocket,
+    ) -> Result<MigrateSessionHostResponse, Error> {
+        let user_id = login_required(&*ci)?;
+        let migrated = rmc_err!(
+            self.storage
+                .migrate_game_session_host(user_id, request.game_session_key.type_id, request.game_session_key.session_id),
+            logger,
+            "error migrating game session host"
+        )?;
+        if !migrated {
+            return Err(Error::AccessDenied);
+        }
+        Ok(MigrateSessionHostResponse)
+    }
+
     /// Handles the `LeaveSession` request.
     fn leave_session(
         &self,
@@ -167,11 +217,8 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         let user_id = login_required(&*ci)?;
         info!(logger, "Client leaves session: {:?}", request);
         rmc_err!(
-            self.storage.leave_game_session(
-                user_id,
-                request.game_session_key.type_id,
-                request.game_session_key.session_id,
-            ),
+            self.storage
+                .leave_game_session(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
             logger,
             "error leaving game session"
         )?;
@@ -243,11 +290,8 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         let user_id = login_required(&*ci)?;
         info!(logger, "Client abandons session: {:?}", request);
         rmc_err!(
-            self.storage.leave_game_session(
-                user_id,
-                request.game_session_key.type_id,
-                request.game_session_key.session_id,
-            ),
+            self.storage
+                .leave_game_session(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
             logger,
             "error abandoning game session"
         )?;
@@ -343,11 +387,8 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         info!(logger, "Client migrates session host: {:?}", request);
 
         let migrated = rmc_err!(
-            self.storage.migrate_game_session_host(
-                user_id,
-                request.game_session_key.type_id,
-                request.game_session_key.session_id,
-            ),
+            self.storage
+                .migrate_game_session_host(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
             logger,
             "error migrating game session host"
         )?;
@@ -368,18 +409,28 @@ impl<CI> GameSessionProtocolServerTrait<CI> for GameSessionProtocolServerImpl {
         })
     }
 
-    /// Handles the `JoinSession` request.
-    ///
-    /// This function currently returns an empty response.
+    /// Handles the `JoinSession` request and persists the authenticated participant.
     fn join_session(
         &self,
-        _logger: &Logger,
+        logger: &Logger,
         _ctx: &Context,
-        _ci: &mut ClientInfo<CI>,
-        _request: JoinSessionRequest,
+        ci: &mut ClientInfo<CI>,
+        request: JoinSessionRequest,
         _client_registry: &ClientRegistry<CI>,
         _socket: &std::net::UdpSocket,
     ) -> Result<JoinSessionResponse, Error> {
+        let user_id = login_required(&*ci)?;
+        info!(logger, "Client joins session: {:?}", request);
+        let joined = rmc_err!(
+            self.storage
+                .join_game_session(user_id, request.game_session_key.type_id, request.game_session_key.session_id,),
+            logger,
+            "error joining game session"
+        )?;
+        if !joined {
+            warn!(logger, "Rejected game session join"; "session_id" => request.game_session_key.session_id, "type_id" => request.game_session_key.type_id, "user_id" => user_id);
+            return Err(Error::AccessDenied);
+        }
         Ok(JoinSessionResponse)
     }
 }
