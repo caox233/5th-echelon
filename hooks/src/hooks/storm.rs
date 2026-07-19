@@ -32,6 +32,10 @@ static_detour! {
     static ConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
     static WsaConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int, *mut c_void, *mut c_void, *mut c_void, *mut c_void) -> c_int;
     static CloseSocketHook: unsafe extern "stdcall" fn(usize) -> c_int;
+    static BindSocketHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
+    static ConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int) -> c_int;
+    static WsaConnectHook: unsafe extern "stdcall" fn(usize, *const SOCKADDR, c_int, *mut c_void, *mut c_void, *mut c_void, *mut c_void) -> c_int;
+    static CloseSocketHook: unsafe extern "stdcall" fn(usize) -> c_int;
     static SendToHook: unsafe extern "stdcall" fn(usize, *const c_char, c_int, c_int, *const SOCKADDR, c_int) -> c_int;
     static RecvFromHook: unsafe extern "stdcall" fn(usize, *const c_char, c_int, c_int, *const SOCKADDR, *mut c_int) -> c_int;
     static EventMaybeQueuePopHook: unsafe extern "thiscall" fn(usize) -> *const  *const *const c_void;
@@ -265,6 +269,8 @@ fn some_event2(this: *mut c_void, arg1: *mut c_void, arg2: *mut c_void, arg3: *m
 
 #[instrument(skip_all)]
 fn sendto(s: usize, buf: *const c_char, len: c_int, flag: c_int, to: *const SOCKADDR, tolen: c_int) -> c_int {
+    force_bind_socket(s, "sendto", to, tolen);
+
     force_bind_socket(s, "sendto", to, tolen);
 
     if let Some(to_ref) = unsafe { to.as_ref() } {
