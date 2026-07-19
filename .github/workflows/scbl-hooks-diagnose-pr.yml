@@ -1,0 +1,37 @@
+name: Diagnose SCBL Hooks build on PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'scbl-v0.6.2-integration'
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scbl-v0.6.2-integration
+          fetch-depth: 0
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          choco install protoc -y --no-progress
+          rustup toolchain install nightly-2025-10-15 --profile minimal --component rustfmt
+          rustup target add i686-pc-windows-msvc --toolchain nightly-2025-10-15
+          rustup override set nightly-2025-10-15
+      - name: Build and persist log
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & cargo build --locked --release -p hooks --target i686-pc-windows-msvc *>&1 | Tee-Object -FilePath SCBL_HOOKS_BUILD_LOG.txt
+          $status = $LASTEXITCODE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add SCBL_HOOKS_BUILD_LOG.txt
+          git commit -m 'ci: record Hooks build log [skip ci]'
+          git push origin HEAD:scbl-v0.6.2-integration
+          exit $status
