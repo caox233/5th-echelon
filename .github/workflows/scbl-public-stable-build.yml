@@ -38,7 +38,9 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config protobuf-compiler libssl-dev libsqlite3-dev libsodium-dev
+          sudo apt-get install -y \
+            build-essential clang libclang-dev cmake ninja-build pkg-config \
+            protobuf-compiler libssl-dev libsqlite3-dev libsodium-dev
       - name: Install pinned Rust
         shell: bash
         run: |
@@ -47,11 +49,12 @@ jobs:
           rustc --version
           cargo --version
           protoc --version
-      - name: Check formatting and tests
+      - name: Check formatting
         shell: bash
-        run: |
-          cargo fmt --all -- --check
-          cargo test --locked -p dedicated_server
+        run: cargo fmt --all -- --check
+      - name: Test dedicated server
+        shell: bash
+        run: cargo test --locked -p dedicated_server
       - name: Build dedicated server
         shell: bash
         run: |
@@ -88,10 +91,12 @@ jobs:
           rustc --version
           cargo --version
           protoc --version
-      - name: Check formatting and build Hooks
+      - name: Check formatting
+        shell: powershell
+        run: cargo fmt --all -- --check
+      - name: Build Hooks
         shell: powershell
         run: |
-          cargo fmt --all -- --check
           cargo build --locked --release -p hooks --target i686-pc-windows-msvc
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $dll = 'target\i686-pc-windows-msvc\release\hooks.dll'
