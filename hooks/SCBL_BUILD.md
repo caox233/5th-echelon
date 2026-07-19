@@ -2,7 +2,7 @@
 
 SCBL 的 Windows x86 Hooks DLL 与 Linux dedicated server 均由本仓库统一编译。
 
-`Build SCBL 5th binaries` 工作流在 `main` 的 Hooks、dedicated server 或相关依赖发生变化时执行，并将校验后的滚动二进制发布到 `scbl-public-stable-latest`。
+`Build SCBL 5th binaries` 工作流在 `main` 的 Hooks、dedicated server 或相关依赖发生变化时执行，并将校验后的滚动二进制发布到 `scbl-public-stable-latest`。Rust 源码在提交后使用固定工具链执行格式校验、测试和 Release 构建。
 
 滚动 Release 至少包含：
 
