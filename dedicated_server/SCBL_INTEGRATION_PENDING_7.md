@@ -1,1 +1,1 @@
-Trigger robust integration workflow v4.
+Validate patched Hooks and dedicated server sources.
