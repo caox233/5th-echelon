@@ -1,8 +1,0 @@
-+ set -euo pipefail
-+ python3
-+ cargo fmt --all
-info: syncing channel updates for nightly-2025-10-15-x86_64-unknown-linux-gnu
-info: latest update on 2025-10-15 for version 1.92.0-nightly (844264add 2025-10-14)
-info: downloading 4 components
-error: 'cargo-fmt' is not installed for the toolchain 'nightly-2025-10-15-x86_64-unknown-linux-gnu'.
-help: run `rustup component add --toolchain nightly-2025-10-15-x86_64-unknown-linux-gnu rustfmt` to install it
