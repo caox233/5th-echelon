@@ -185,13 +185,13 @@ pub enum PacketType {
 #[derive(Debug, Copy, Clone)]
 pub enum PacketFlag {
     /// Acknowledgment flag.
-    Ack = 0b0001,      // 1
+    Ack = 0b0001, // 1
     /// Reliable delivery flag.
     Reliable = 0b0010, // 2
     /// Acknowledgment is required.
-    NeedAck = 0b0100,  // 4
+    NeedAck = 0b0100, // 4
     /// The packet has a size field.
-    HasSize = 0b1000,  // 8
+    HasSize = 0b1000, // 8
 }
 
 /// Represents a PRUDP packet.
